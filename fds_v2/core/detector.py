@@ -1,9 +1,9 @@
 from typing import Any
 
-from fds_v2.core.enums import CaseKind
-from fds_v2.core.models import Result
-from fds_v2.core.rules_engine import detect_order_core, detect_purchase_core
-from fds_v2.core.side_effects import register_blocklist
+from .enums import CaseKind
+from .models import Result
+from .rules_engine import detect_order_core, detect_purchase_core
+from .side_effects import register_blocklist
 
 
 def detect_case(kind: CaseKind | str, ref_id: Any) -> Result:
