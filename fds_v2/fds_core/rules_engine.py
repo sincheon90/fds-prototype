@@ -2,12 +2,11 @@ from typing import Dict, List, Tuple, Any
 
 from django.db import connection
 
+from .enums import Decision
 from .hit import Hit
 
 # structure: target -> list of (rule_id, rule_sql, action, register_blocklist)
 RULES: Dict[str, List[Tuple[str, str, str, bool]]] = {"order": [], "purchase": []}
-
-Decision = str  # "ALLOW" | "REVIEW" | "BLOCK"
 
 def resolve_p0(hits: List[Hit]) -> Decision:
     """
@@ -16,11 +15,11 @@ def resolve_p0(hits: List[Hit]) -> Decision:
       - else any REVIEW -> REVIEW
       - else ALLOW
     """
-    if any(h.decision == "BLOCK" for h in hits):
-        return "BLOCK"
-    if any(h.decision == "REVIEW" for h in hits):
-        return "REVIEW"
-    return "ALLOW"
+    if any(h.decision == Decision.BLOCK for h in hits):
+        return Decision.BLOCK
+    if any(h.decision == Decision.REVIEW for h in hits):
+        return Decision.REVIEW
+    return Decision.ALLOW
 
 
 def _run_one_rule(rule_sql: str, params: Dict[str, Any], target: str) -> bool:
@@ -74,8 +73,8 @@ def detect_order_core(order_id: Any) -> Tuple[Decision, List[Hit]]:
     params = {"order_id": order_id}
     hits = _evaluate_target_rules("order", params)
 
-    sev = {"BLOCK": 0, "REVIEW": 1}
-    hits_sorted = sorted(hits, key=lambda h: (sev.get(h.decision, 9), h.rule_id))
+    _SEV = {Decision.BLOCK: 0, Decision.REVIEW: 1,}
+    hits_sorted = sorted(hits, key=lambda h: (_SEV.get(h.decision, 9), h.rule_id))
     final = resolve_p0(hits_sorted)
 
     return final, hits_sorted
