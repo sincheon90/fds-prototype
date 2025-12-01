@@ -113,3 +113,57 @@ class DetectionLog(TimestampedModel):
         return f"DetectionLog({self.id}, {self.case_kind}, {self.case_id})"
 
 
+# --------------------------
+# Outbox / Processed
+# --------------------------
+
+class Outbox(TimestampedModel):
+    """
+    Durable outbox for detection events.
+
+    Each row represents one detection job to be dispatched to workers.
+    """
+    class Status(models.TextChoices):
+        READY = "READY", "Ready"
+        SENT = "SENT", "Sent"
+        ERROR = "ERROR", "Error"
+
+    shard_id = models.CharField(max_length=64, default="default")
+    event_type = models.CharField(max_length=64)
+    aggregate_id = models.CharField(max_length=128)
+    payload = models.JSONField()
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.READY,
+    )
+
+    class Meta:
+        db_table = "outbox"
+        indexes = [
+            models.Index(fields=["shard_id", "status", "id"]),
+        ]
+
+    def __str__(self):
+        return f"Outbox({self.id}, {self.event_type}, {self.status})"
+
+
+class Processed(TimestampedModel):
+    """
+    Idempotency log for processed detection events.
+    Ensures each (shard_id, event_type, aggregate_id) is processed at most once.
+    """
+    shard_id = models.CharField(max_length=32)
+    event_type = models.CharField(max_length=64)
+    aggregate_id = models.CharField(max_length=64)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["shard_id", "event_type", "aggregate_id"],
+                name="uq_processed_event",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"Processed({self.shard_id}, {self.event_type}, {self.aggregate_id})"

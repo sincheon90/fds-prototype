@@ -1,12 +1,26 @@
-# fds_django/services/payload.py
+from decimal import Decimal
 from typing import Dict, Any
+
+
+def _normalize(obj: Any) -> Any:
+    """
+    Recursively convert Decimal -> str
+    and ensure all nested structures are JSON-serializable.
+    """
+    if isinstance(obj, Decimal):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {k: _normalize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_normalize(i) for i in obj]
+    return obj
 
 
 def minimal_order_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Build minimal payload for asynchronous detection.
     """
-    return {
+    payload = {
         "kind": "order",
         "order_id": data["order_id"],
         "account_id": data.get("account_id"),
@@ -20,7 +34,7 @@ def minimal_order_payload(data: Dict[str, Any]) -> Dict[str, Any]:
         "items": data.get("items", []),
         "metadata": data.get("metadata", {}),
     }
-
+    return _normalize(payload)
 
 def minimal_purchase_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     """
