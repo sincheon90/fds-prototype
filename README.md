@@ -235,3 +235,100 @@ This illustrates the end-to-end detection pipeline.
 - PostgreSQL  
 - Docker  
 
+
+---
+
+## 11.	Running with Docker
+
+This project includes a Docker Compose setup that allows you to run the API, Celery workers, Redis, and PostgreSQL together.
+
+### 11.1 Start the stack
+
+Run the following command from the project root:
+
+```bash
+docker compose up --build
+```
+
+This command will build all images and start:
+- Django API containers
+- Celery workers and Celery beat
+- Redis
+- PostgreSQL
+
+Once the stack is running, the APIs are accessible from your host machine.
+
+---
+
+### 11.2 Synchronous detection test (block API)
+
+The synchronous endpoint executes fraud detection during the request/response cycle and immediately returns a decision.
+
+```bash
+curl -X POST http://127.0.0.1:8000/fds/detect/order \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{
+    "order_id": "ORD123",
+    "account_id": "A100",
+    "device_id": "D100",
+    "order_country": "JP",
+    "total_price": 12000,
+    "currency": "JPY",
+    "order_status": "CREATED",
+    "items": [
+      {"product_id": "P1", "unit_price": 6000, "quantity": 2}
+    ],
+    "metadata": {"source": "mobile-web"}
+  }'
+```
+Example response (will vary depending on rules you configure):
+
+```js
+{
+  "decision": "allow",
+  "reasons": [],
+  "register_blocklist": false,
+  "register_params": {
+    "user": null,
+    "device": null,
+    "card": null
+  }
+}
+```
+
+---
+
+### 11.3 Asynchronous ingestion test (Outbox + Celery)
+
+The asynchronous path only ingests the snapshot and enqueues work.
+Heavy rule evaluation is done later by Celery workers consuming Outbox events.
+
+```bat
+curl -X POST http://127.0.0.1:8000/orders \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{
+    "order_id": "ORD123",
+    "account_id": "A100",
+    "device_id": "D100",
+    "order_country": "JP",
+    "total_price": 12000,
+    "currency": "JPY",
+    "order_status": "CREATED",
+    "items": [
+      {"product_id": "P1", "unit_price": 6000, "quantity": 2}
+    ],
+    "metadata": {"source": "mobile-web"}
+  }'
+```
+Expected response:
+
+```js
+{"status": "queued"}
+```
+What happens internally:
+1.	Django upserts the Order snapshot.
+2.	An Outbox row is inserted with status READY.
+3.	A Celery worker picks up the Outbox batch and calls the rule engine.
+4.	Results are stored in the Processed table for idempotency and audit.
