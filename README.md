@@ -35,8 +35,6 @@ I needed a technical artifact that clearly demonstrates how I identify problems 
 
 This project is grounded in concrete issues observed while operating fraud detection systems.
 
----
-
 ### 2.1 Short-circuit Detections and Limited Visibility
 
 Short-circuit detection evaluated rules in order and stopped at the first hit.
@@ -213,8 +211,6 @@ Separating Order, Purchase, and Outbox ingestion keeps the system consistent, ob
 ## 6. Core Components
 
 This section explains how the design decisions in Section 3 are realized in the system.
-
----
 
 ### 6.1 Ingestion API (Synchronous Boundary)
 
