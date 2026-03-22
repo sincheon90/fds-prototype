@@ -1,285 +1,180 @@
 # FDS v2 — Fraud Detection System Prototype
-A Python-based reimplementation of real fraud-detection workflows.
-
-Decision-focused redesign for observability, replayability, and auditability.
-
-
----
-
-## 0. Overview
-
-FDS v2 is a backend prototype that reconstructs fraud-detection workflows I previously operated in real fintech environments.
-
-This project emphasizes predictable behavior, explicit decisions, and operational traceability under realistic constraints.
-
-The system is designed to show not only how fraud detection can be implemented,
-but how architectural decisions shape observability, explainability, and long-term operability.
-
 
 ---
 
 ## 1. Why This Project Exists
 
-This project exists as a deliberate effort to re-engage with fraud detection from a system-design perspective. 
+FDS v2 is a fraud detection system prototype that reconstructs detection workflows I previously operated in production.
 
-I had previously operated production FDS pipelines,
-but over time, many architectural decisions became implicit - shaped by legacy constraints, operational trade-offs, and incremental fixes.
+The system decisions were shaped by legacy constraints and incremental fixes
+that made the system harder to understand and reason about.
 
-For my next role, I needed more than a functional prototype.
-I needed a technical artifact that clearly demonstrates how I identify problems and make decisions in ambiguous, risk-sensitive systems.
-
+This project revisits fraud detection from a system design perspective,
+focusing on making decisions explicit and system behavior analyzable.
 
 ---
 
 ## 2. Problems Observed in Production
 
-This project is grounded in concrete issues observed while operating fraud detection systems.
-
 ### 2.1 Short-circuit Detections and Limited Visibility
 
-Short-circuit detection evaluated rules in order and stopped at the first hit.
-This approach was very efficient and correct for real-time decision-making. 
+Rules were evaluated sequentially and stopped at the first match.
 
-However, it introduced visibility limitations:
-- Only triggered rules were observed.
-- Signals from later rules were never evaluated and recorded.
-- For blocklisted users, changes in transaction behavior were masked.
+This was efficient for real-time decisions,
+but only triggered rules were recorded while other signals were lost.
 
-As a result, it became difficult to:
-- observe signals that did not lead to enforcement.
-- understand which rules actually contributed to detection.
-- track how user behavior changed over time.
+As a result, it was difficult to understand detection behavior
+or analyze how rules contributed over time.
 
-These limitations did not affect real-time correctness,
-but significantly reduced the system’s ability to be analyzed and improved.
+### 2.2 Explainable Decisions, Invisible Evaluation
 
----
+Decisions were explainable through rule IDs and transaction data.
 
-### 2.2 Explainable Decisions, Limited Observability
+However, the system did not capture non-triggered evaluations or near-miss cases.
 
-When a rule triggered, the resulting decision was explainable
-through rule IDs, transaction data, and monitoring-based analysis.
-
-However, this explainability was limited to enforced outcomes.
-The system did not systematically capture:
-- near-miss cases,
-- non-trigger distributions,
-- or rule-level behavioral signals.
-
-Without this observational data,
-detection tuning relied heavily on experience and intuition
-rather than measurable evidence.
-
----
+As a result, it was difficult to understand how rules behaved unless they fired.
 
 ### 2.3 Rule Changes Were Hard to Verify
 
-Rule changes needed to be tested under conditions equivalent to production.
+Rule changes needed to be tested under production-like conditions.
 
-However, the system lacked a production-like mechanism to:
-- replay historical events,
-- validate changes quantitatively,
-- and observe unintended side effects safely.
+However, there was no reliable way to replay historical events
+or validate changes safely.
 
-This made iterative improvement slower and riskier.
+This made iteration slower and increased the risk of unintended side effects.
 
 ---
 
 ## 3. Key Design Decisions
 
-Based on these observations, this project focuses on three architectural decisions.
-
-While informed by prior operational experience, it is a clean redesign intended to reproduce production behavior rather than mirror an existing implementation.
-
-The design emphasizes what should be observable and verifiable,
-rather than optimizing solely for minimal latency or immediate enforcement.
-
----
+This project focuses on three design decisions to improve observability and verification.
 
 ### 3.1 Asynchronous Detection
 
-Detection logic beyond preliminary checks is decoupled from the request lifecycle and executed asynchronously.
+To address the tight coupling between request latency and rule evaluation cost,
+detection is decoupled from the request lifecycle and processed asynchronously.
 
-This allows:
-- stable ingestion regardless of detection workload,
-- explicit recording of detection attempts,
-- independent retry and inspection of failures.
+This keeps ingestion predictable and introduces a clear retry boundary.
 
-Detection results are not immediately returned to the caller.
-This trade-off improves observability, operational reliability,
-and allows deferred enforcement such as post-authorization cancellation.
-
-
----
+As a result, detection can scale independently without affecting request latency.
 
 ### 3.2 Separation of Detection and Decision
 
-Detection and final decision-making are treated as separate concerns.
+To address the lack of visibility caused by short-circuit evaluation,
+rule evaluation is separated from enforcement.
 
-The system distinguishes between:
-- event ingestion and preliminary checks (e.g. blocklist),
-- rule evaluation (detection),
-- final decision and side effects (e.g. payment blocking, blocklist registration).
-
-Rule evaluation is recorded regardless of whether an enforcement action is taken.
-
-This makes it possible to:
-- capture evaluation results for warning or observation-only rules,
-- retain near-miss and non-blocking signals,
-- analyze detection behavior independently of policy decisions.
-
----
+All evaluation results are recorded, including non-blocking and near-miss cases.
 
 ### 3.3 Production-Equivalent Evaluation and Replay
 
-The rule engine is structured to support evaluation under conditions equivalent to production.
+To address the lack of consistency between live detection and offline validation,
+the same rule engine is used for both production execution and replay.
 
-Rather than relying on simplified test logic,
-rule evaluation uses the same definitions and execution path as live detection.
-
-This enables:
-- replay of historical events to validate rule changes,
-- evaluation of detection behavior under production-like conditions,
-- prevention of behavioral drift between test and production environments.
-
-
+This enables safe validation of rule changes using real historical data,
+reducing the risk of unintended side effects in production.
 
 ---
 
-## 4. Architecture
+## 4. What This Design Changes
 
-### 4.1 Data & Control Flow
+Compared with a request-coupled detection flow, this design changes three things:
 
-```
----------------------------------------
-client_server
-    │
-    │ HTTP POST /orders
-    ▼
-Django API (fds_api + fds_django)
-    │
-    ├─ Save Order (upsert)
-    └─ Insert Outbox(READY)
----------------------------------------
-                 │
-                 ▼
----------------------------------------
-Outbox Table (DB)
-    │  
-    ▼
-Dispatcher Task (dispatch_outbox_batch)
-    │
-    └─ detect_case_task.delay(payload)
----------------------------------------
-                 │
-                 ▼
----------------------------------------
-Celery Worker Pool
-    │
-    ├─ Idempotency guard (Processed)
-    ├─ detect_case(db, CaseParams)
-    ├─ Apply blocklist (transactional)
-    └─ Insert Processed
----------------------------------------
-```
+- ingestion remains fast and durable even when rule evaluation becomes heavier,
+- rule behavior becomes inspectable beyond only triggered outcomes,
+- and rule changes can be validated by replaying historical events through the same engine.
 
-### 4.2 Key Principles
-
-- Ingestion vs evaluation separation  
-- Idempotent ingestion  
-- Outbox as source of truth  
-- Asynchronous worker evaluation  
-- Clean domain modelling  
+As a result, the system is designed not only to make decisions,
+but to make detection behavior observable and verifiable.
 
 ---
 
-## 5. Domain Model
+## 5. Architecture
 
-Fraud systems receive heterogeneous payloads from multiple upstream services.  
-Separating Order, Purchase, and Outbox ingestion keeps the system consistent, observable, and easy to reason about.
+![FDS Architecture](docs/architecture.png)
 
-| Entity        | Description |
-|---------------|-------------|
-| Order         | User-intent event with items, price, metadata |
-| Purchase      | Payment attempt tied to an order |
-| Outbox        | Durable event queue for async processing |
-| Blocklist     | Stores account/device/card restrictions |
+The system is organized as a simple asynchronous pipeline:
 
+**Ingestion → Dispatch → Detection**
 
----
+- **Ingestion** stores the incoming snapshot and writes an outbox row in the same transaction.
+- **Dispatch** moves READY outbox events to background workers.
+- **Detection** evaluates rules, applies side effects, and records results.
 
-## 6. Core Components
+This keeps request handling small and durable,
+while moving heavier rule evaluation into an independent worker stage.
 
-This section explains how the design decisions in Section 3 are realized in the system.
-
-### 6.1 Ingestion API (Synchronous Boundary)
-
-The ingestion API accepts event snapshots and performs only lightweight validation and persistence.
-
-Its responsibilities are intentionally limited:
-- idempotent upsert of domain entities,
-- creation of Outbox events,
-- no heavy detection or rule execution.
-
-This keeps the request path predictable and failure-tolerant.
+As a result, request latency stays predictable,
+and detection behavior becomes easier to retry, inspect, and replay.
 
 ---
 
-### 6.2 Outbox & Dispatcher (Asynchronous Boundary)
+## 6. Domain Model
 
-The Outbox serves as the source of truth for detection work.
+The system models fraud detection around explicit ingestion, processing, and enforcement boundaries.
 
-By persisting events before dispatch:
-- ingestion remains atomic,
-- lost or duplicated detection is prevented,
-- replay becomes possible.
+| Entity        | Description                                                  |
+|---------------|--------------------------------------------------------------|
+| Order         | User-intent event with items, price, and metadata            |
+| Purchase      | Payment attempt tied to an order                             |
+| Outbox        | Durable event queue for asynchronous processing              |
+| Processed     | Idempotency record to prevent duplicate execution            |
+| Rule          | Detection condition evaluated against event context          |
+| DetectionLog  | Stored evaluation result for replay, audit, and analysis     |
+| Blocklist     | Enforcement state for restricted accounts, devices, or cards |
 
-The dispatcher bridges persistence and asynchronous execution.
-
----
-
-### 6.3 Celery Workers (Detection Execution)
-
-Celery workers consume Outbox events and execute detection logic asynchronously.
-
-This allows:
-- horizontal scaling of evaluation,
-- isolation of failures,
-- controlled retries and inspection.
-
-Detection execution is independent of request latency.
+These boundaries make detection behavior explicit, enabling inspection, replay, and safe evolution of rules.
 
 ---
 
-### 6.4 Rule Engine (Evaluation Logic)
+## 7. Example Scenario
 
-The rule engine evaluates fraud conditions using a stateless, SQL-like rule model.
+Example: a purchase event is submitted for an account from a new device.
 
-It is responsible only for evaluation:
-- no enforcement,
-- no side effects,
-- no coupling to transport or persistence.
+1. `POST /purchases` is received  
+2. The purchase snapshot is stored  
+3. An outbox event is created  
+4. A worker processes the event asynchronously  
+5. The rule engine evaluates multiple conditions  
+6. Evaluation results and final decision are recorded  
+7. Blocklist state may be updated if required  
 
-This separation enables replay, simulation, and independent verification.
-
----
-
-### 6.5 Synchronous Detection Path (For Comparison)
-
-A synchronous detection path exists for comparison and testing.
-
-It demonstrates the behavioral difference between:
-- immediate enforcement,
-- and observation-first asynchronous detection.
-
+This shows how ingestion, evaluation, and enforcement are separated,
+while preserving rule-level traceability for later analysis or replay.
 
 ---
 
-## 7.	Running with Docker
+## 8. Future Extensions
+
+
+- **Rule Simulation & Replay Engine**  
+  Replays historical snapshots to check how rule changes behave before deployment.
+
+
+- **Fine-Grained Audit Viewer**  
+  Shows each detection step: inputs, triggered rules, intermediate states, and final decisions.
+
+
+- **Chargeback & Dispute Analytics Dashboard**  
+  Aggregates outcomes, rule triggers, false-positive rates, and dispute ratios.
+
+---
+
+## 9. Tech Stack
+
+- Python 3.11  
+- Django / DRF
+- Celery  
+- Redis  
+- PostgreSQL  
+- Docker  
+
+---
+
+## 10.	Running with Docker
 
 This project includes a Docker Compose setup that allows you to run the API, Celery workers, Redis, and PostgreSQL together.
 
-### 7.1 Start the stack
+### 10.1 Start the stack
 
 Run the following command from the project root:
 
@@ -297,7 +192,7 @@ Once the stack is running, the APIs are accessible from your host machine.
 
 ---
 
-### 7.2 Synchronous detection test (block API)
+### 10.2 Synchronous detection API (debug / direct evaluation)
 
 The synchronous endpoint executes fraud detection during the request/response cycle and immediately returns a decision.
 
@@ -336,7 +231,7 @@ Example response (will vary depending on rules you configure):
 
 ---
 
-### 7.3 Asynchronous ingestion test (Outbox + Celery)
+### 10.3 Asynchronous ingestion API (production path)
 
 The asynchronous path only ingests the snapshot and enqueues work.
 Heavy rule evaluation is done later by Celery workers consuming Outbox events.
@@ -372,61 +267,3 @@ What happens internally:
 
 
 ---
-
-## 8. Example Scenario
-
-A user in Japan attempts a high-value payment from an unseen device:
-
-1. `/ingest/purchase` received  
-2. Snapshot saved and Outbox event created  
-3. Worker consumes event  
-4. Rule engine loads context: new device, unusual amount, account mismatch  
-5. Rules trigger   
-   - “High-value + unknown device → REVIEW”
-   - “High-value + risk_country=BR → BLOCK”
-   - “3+ payment attempts in 10 minutes → BLOCK”
-6. Blocklist may be updated  
-7. Decision saved for audit  
-
-This illustrates the end-to-end detection pipeline.
-
-
----
-
-## 9. Future Extensions
-
-- **Rule Management UI**  
-  Lets analysts update rules, thresholds, and conditions without code changes.  
-  Directly connected to the SQL-based rule storage.
-
-
-- **Rule Simulation & Replay Engine**  
-  Replays historical snapshots to check how rule changes behave before deployment.  
-  Ensures predictable detection behavior.
-
-
-- **Event Reprocessing Pipeline**  
-  Re-runs past events whenever rules or blocklists change.  
-  Keeps the system consistent as risk logic evolves.
-
-
-- **Fine-Grained Audit Viewer**  
-  Shows each detection step: inputs, triggered rules, intermediate states, and final decisions.  
-  Makes investigation and explanation straightforward.
-
-
-- **Chargeback & Dispute Analytics Dashboard**  
-  Aggregates outcomes, rule triggers, false-positive rates, and dispute ratios.  
-  Helps evaluate rule effectiveness and blocklist impact.
-
----
-
-## 10. Tech Stack
-
-- Python 3.11  
-- Django / DRF
-- Celery  
-- Redis  
-- PostgreSQL  
-- Docker  
-
